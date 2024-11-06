@@ -1,28 +1,54 @@
-// server.js
-const WebSocket = require('ws');
-
-const port = process.env.PORT || 3000;
-const wss = new WebSocket.Server({ port });
-
-wss.on('connection', (ws) => {
-    console.log('새 연결이 수립되었습니다.');
-
-    // 클라이언트로부터 메시지를 수신
-    ws.on('message', (message) => {
-        const data = JSON.parse(message);
-        
-        // 수신한 메시지를 같은 방의 다른 클라이언트에게 전달
-        wss.clients.forEach(client => {
-            if (client !== ws && client.readyState === WebSocket.OPEN) {
-                client.send(JSON.stringify(data));
-            }
-        });
-    });
-
-    // 클라이언트가 연결을 종료할 때 로그 남김
-    ws.on('close', () => {
-        console.log('연결이 종료되었습니다.');
-    });
+const express = require('express');
+const app = express();
+const server = require('http').createServer(app);
+const io = require('socket.io')(server, {
+  cors: {
+    origin: "*",
+    methods: ["GET", "POST"]
+  }
 });
 
-console.log(`WebSocket 서버가 ${port} 포트에서 실행 중입니다.`);
+app.use(express.static('public'));
+
+const rooms = new Map();
+
+io.on('connection', (socket) => {
+  console.log('User connected:', socket.id);
+
+  socket.on('join-room', (roomId) => {
+    socket.join(roomId);
+    const room = rooms.get(roomId) || new Set();
+    room.add(socket.id);
+    rooms.set(roomId, room);
+    
+    socket.to(roomId).emit('user-connected', socket.id);
+    
+    socket.on('disconnect', () => {
+      const room = rooms.get(roomId);
+      if (room) {
+        room.delete(socket.id);
+        if (room.size === 0) {
+          rooms.delete(roomId);
+        }
+      }
+      socket.to(roomId).emit('user-disconnected', socket.id);
+    });
+  });
+
+  socket.on('offer', (offer, roomId, targetId) => {
+    socket.to(targetId).emit('offer', offer, socket.id);
+  });
+
+  socket.on('answer', (answer, roomId, targetId) => {
+    socket.to(targetId).emit('answer', answer, socket.id);
+  });
+
+  socket.on('ice-candidate', (candidate, roomId, targetId) => {
+    socket.to(targetId).emit('ice-candidate', candidate, socket.id);
+  });
+});
+
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () => {
+  console.log(`Server is running on port ${PORT}`);
+});
